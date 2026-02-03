@@ -83,8 +83,13 @@ class ModelConfig:
         
     def require_downloading(self):
         if self.path is not None:
+            print(f"DEBUG: require_downloading=False (path is set): {self.path}")
+            return False
+        if self.model_id is not None and os.path.exists(self.model_id):
+            print(f"DEBUG: require_downloading=False (local model_id found): {self.model_id}")
             return False
         skip_download = self.parse_skip_download()
+        print(f"DEBUG: require_downloading={not skip_download} (model_id={self.model_id}, exists={os.path.exists(str(self.model_id)) if self.model_id else 'None'})")
         return not skip_download
     
     def reset_local_model_path(self):

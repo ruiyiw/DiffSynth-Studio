@@ -1,9 +1,39 @@
 import torch, os, argparse, accelerate, warnings
+try:
+    import wandb
+except ImportError:
+    wandb = None
 from diffsynth.core import UnifiedDataset
 from diffsynth.core.data.operators import LoadVideo, LoadAudio, ImageCropAndResize, ToAbsolutePath
 from diffsynth.pipelines.wan_video import WanVideoPipeline, ModelConfig
 from diffsynth.diffusion import *
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
+class WandbLogger(ModelLogger):
+    def __init__(self, accelerator, output_path, remove_prefix_in_ckpt=None, state_dict_converter=lambda x:x, args=None):
+        super().__init__(output_path, remove_prefix_in_ckpt, state_dict_converter)
+        self.use_wandb = False
+        self.log_steps = getattr(args, "log_steps", 1)
+        if args is not None and args.use_wandb:
+            if wandb is None:
+                warnings.warn("wandb is not installed. Please install it using `pip install wandb`.")
+            elif accelerator.is_main_process:
+                wandb.init(project=args.wandb_project, name=args.wandb_name, config=vars(args))
+                self.use_wandb = True
+
+    def on_step_end(self, accelerator, model, save_steps=None, **kwargs):
+        if self.use_wandb and self.num_steps % self.log_steps == 0:
+            logs = {}
+            if "loss" in kwargs:
+                logs["loss"] = kwargs["loss"].item()
+            if "learning_rate" in kwargs:
+                logs["learning_rate"] = kwargs["learning_rate"]
+            if "epoch" in kwargs:
+                logs["epoch"] = kwargs["epoch"]
+            if logs:
+                wandb.log(logs, step=self.num_steps)
+        super().on_step_end(accelerator, model, save_steps, **kwargs)
 
 
 class WanTrainingModule(DiffusionTrainingModule):
@@ -117,6 +147,10 @@ def wan_parser():
     parser.add_argument("--max_timestep_boundary", type=float, default=1.0, help="Max timestep boundary (for mixed models, e.g., Wan-AI/Wan2.2-I2V-A14B).")
     parser.add_argument("--min_timestep_boundary", type=float, default=0.0, help="Min timestep boundary (for mixed models, e.g., Wan-AI/Wan2.2-I2V-A14B).")
     parser.add_argument("--initialize_model_on_cpu", default=False, action="store_true", help="Whether to initialize models on CPU.")
+    parser.add_argument("--use_wandb", action="store_true", help="Use wandb for logging.")
+    parser.add_argument("--wandb_project", type=str, default="wan-video", help="Wandb project name.")
+    parser.add_argument("--wandb_name", type=str, default=None, help="Wandb run name.")
+    parser.add_argument("--log_steps", type=int, default=1, help="Frequency of logging loss.")
     return parser
 
 
@@ -170,9 +204,11 @@ if __name__ == "__main__":
         max_timestep_boundary=args.max_timestep_boundary,
         min_timestep_boundary=args.min_timestep_boundary,
     )
-    model_logger = ModelLogger(
+    model_logger = WandbLogger(
+        accelerator,
         args.output_path,
         remove_prefix_in_ckpt=args.remove_prefix_in_ckpt,
+        args=args
     )
     launcher_map = {
         "sft:data_process": launch_data_process_task,
