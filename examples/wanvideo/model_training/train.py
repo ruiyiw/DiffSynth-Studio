@@ -3,6 +3,10 @@ try:
     import wandb
 except ImportError:
     wandb = None
+try:
+    from huggingface_hub import HfApi
+except ImportError:
+    HfApi = None
 from diffsynth.core import UnifiedDataset
 from diffsynth.core.data.operators import LoadVideo, LoadAudio, ImageCropAndResize, ToAbsolutePath
 from diffsynth.pipelines.wan_video import WanVideoPipeline, ModelConfig
@@ -22,6 +26,20 @@ class WandbLogger(ModelLogger):
                 wandb.init(project=args.wandb_project, name=args.wandb_name, config=vars(args))
                 self.use_wandb = True
 
+        self.push_to_hub = getattr(args, "push_to_hub", False)
+        self.hub_model_id = getattr(args, "hub_model_id", None)
+        self.hub_token = getattr(args, "hub_token", None)
+        if self.hub_token == "":
+            self.hub_token = None
+        if self.push_to_hub:
+            if HfApi is None:
+                warnings.warn("huggingface_hub is not installed. Please install it using `pip install huggingface_hub`.")
+                self.push_to_hub = False
+            elif accelerator.is_main_process:
+                self.api = HfApi(token=self.hub_token)
+                if self.hub_model_id:
+                    self.api.create_repo(repo_id=self.hub_model_id, exist_ok=True, repo_type="model")
+
     def on_step_end(self, accelerator, model, save_steps=None, **kwargs):
         if self.use_wandb and self.num_steps % self.log_steps == 0:
             logs = {}
@@ -34,6 +52,19 @@ class WandbLogger(ModelLogger):
             if logs:
                 wandb.log(logs, step=self.num_steps)
         super().on_step_end(accelerator, model, save_steps, **kwargs)
+
+    def on_epoch_end(self, accelerator, model, epoch_id, **kwargs):
+        super().on_epoch_end(accelerator, model, epoch_id)
+        if self.push_to_hub and accelerator.is_main_process and self.hub_model_id:
+            filename = f"epoch-{epoch_id}.safetensors"
+            file_path = os.path.join(self.output_path, filename)
+            if os.path.exists(file_path):
+                self.api.upload_file(
+                    path_or_fileobj=file_path,
+                    path_in_repo=filename,
+                    repo_id=self.hub_model_id,
+                    repo_type="model"
+                )
 
 
 class WanTrainingModule(DiffusionTrainingModule):
@@ -151,6 +182,9 @@ def wan_parser():
     parser.add_argument("--wandb_project", type=str, default="wan-video", help="Wandb project name.")
     parser.add_argument("--wandb_name", type=str, default=None, help="Wandb run name.")
     parser.add_argument("--log_steps", type=int, default=1, help="Frequency of logging loss.")
+    parser.add_argument("--push_to_hub", action="store_true", help="Push checkpoints to Hugging Face Hub.")
+    parser.add_argument("--hub_model_id", type=str, default=None, help="The name of the repository to keep in sync with the local `output_dir`.")
+    parser.add_argument("--hub_token", type=str, default=None, help="The token to use to push to the Model Hub.")
     return parser
 
 
