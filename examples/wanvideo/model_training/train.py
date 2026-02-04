@@ -38,7 +38,17 @@ class WandbLogger(ModelLogger):
             elif accelerator.is_main_process:
                 self.api = HfApi(token=self.hub_token)
                 if self.hub_model_id:
-                    self.api.create_repo(repo_id=self.hub_model_id, exist_ok=True, repo_type="model")
+                    if "/" not in self.hub_model_id:
+                        try:
+                            username = self.api.whoami()["name"]
+                            self.hub_model_id = f"{username}/{self.hub_model_id}"
+                        except Exception as e:
+                            print(f"Failed to auto-detect username: {e}")
+
+                    try:
+                        self.api.create_repo(repo_id=self.hub_model_id, exist_ok=True, repo_type="model")
+                    except Exception as e:
+                        print(f"Warning: Failed to create URL: {e}")
 
     def on_step_end(self, accelerator, model, save_steps=None, **kwargs):
         if self.use_wandb and self.num_steps % self.log_steps == 0:
