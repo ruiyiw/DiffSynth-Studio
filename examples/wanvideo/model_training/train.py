@@ -81,12 +81,17 @@ class WandbLogger(ModelLogger):
             filename = f"epoch-{epoch_id}.safetensors"
             file_path = os.path.join(self.output_path, filename)
             if os.path.exists(file_path):
-                self.api.upload_file(
-                    path_or_fileobj=file_path,
-                    path_in_repo=filename,
-                    repo_id=self.hub_model_id,
-                    repo_type="model"
-                )
+                print(f"Starting upload of {filename} to {self.hub_model_id}...")
+                try:
+                    self.api.upload_file(
+                        path_or_fileobj=file_path,
+                        path_in_repo=filename,
+                        repo_id=self.hub_model_id,
+                        repo_type="model"
+                    )
+                    print(f"Successfully uploaded {filename}")
+                except Exception as e:
+                    print(f"Failed to upload {filename}: {e}")
 
 
 class WanTrainingModule(DiffusionTrainingModule):
