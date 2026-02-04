@@ -1,5 +1,11 @@
 import torch, os, argparse, accelerate, warnings
 try:
+    import hf_transfer
+    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+except ImportError:
+    hf_transfer = None
+
+try:
     import wandb
 except ImportError:
     wandb = None
@@ -37,6 +43,12 @@ class WandbLogger(ModelLogger):
                 self.push_to_hub = False
             elif accelerator.is_main_process:
                 self.api = HfApi(token=self.hub_token)
+                
+                if hf_transfer is None:
+                    print("Warning: `hf_transfer` not installed. Recommended for faster uploads: `pip install hf_transfer`")
+                else:
+                    print(f"hf_transfer enabled: {os.environ.get('HF_HUB_ENABLE_HF_TRANSFER')}")
+
                 if self.hub_model_id:
                     if "/" not in self.hub_model_id:
                         try:
